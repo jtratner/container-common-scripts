@@ -19,51 +19,6 @@ DOCKERFILE_PATH=""
 error() { echo "ERROR: $*" ; false ; }
 
 
-# _parse_output_inner
-# -------------------
-# Helper function for 'parse_output'.
-# We need to avoid case statements in $() for older Bash versions (per issue
-# postgresql-container#35, mac ships with 3.2).
-# Example of problematic statement: echo $(case i in i) echo i;; esac)
-_parse_output_inner ()
-{
-    set -o pipefail
-    {
-        case $stream in
-        stdout|1|"")
-            eval "$command" | tee >(cat - >&$stdout_fd)
-            ;;
-        stderr|2)
-            set +x # avoid stderr pollution
-            eval "$command" {free_fd}>&1 1>&$stdout_fd 2>&$free_fd | tee >(cat - >&$stderr_fd)
-            ;;
-        esac
-        # Inherit correct exit status.
-        (exit ${PIPESTATUS[0]})
-    } | eval "$filter"
-}
-
-
-# parse_output COMMAND FILTER_COMMAND OUTVAR [STREAM={stderr|stdout}]
-# -------------------------------------------------------------------
-# Parse standard (error) output of COMMAND with FILTER_COMMAND and store the
-# output into variable named OUTVAR.  STREAM might be 'stdout' or 'stderr',
-# defaults to 'stdout'.  The filtered output stays (live) printed to terminal.
-# This method doesn't create any explicit temporary files.
-# Defines:
-#   ${$OUTVAR}: Set to FILTER_COMMAND output.
-parse_output ()
-{
-  local command=$1 filter=$2 var=$3 stream=$4
-  local raw_output= rc=0
-  {
-      raw_output=$(_parse_output_inner)
-  } {stdout_fd}>&1 {stderr_fd}>&2
-  rc=$?
-  eval "$var=\$raw_output"
-  (exit $rc)
-}
-
 # "best-effort" cleanup of previous image
 function clean_image {
   if test -f .image-id.raw; then
@@ -108,9 +63,8 @@ function docker_build_with_version {
     fi
   fi
 
-  parse_output 'docker build '"$BUILD_OPTIONS"' -f "$dockerfile" "${DOCKER_BUILD_CONTEXT}"' \
-               "tail -n 1 | awk '/Successfully built|^--> (Using cache )?[a-fA-F0-9]+$/{print \$NF}'" \
-               IMAGE_ID
+    set -x
+  IMAGE_ID=$(docker build $BUILD_OPTIONS -f "$dockerfile" "${DOCKER_BUILD_CONTEXT}" | tail -n 1 | awk '/Successfully built|^--> (Using cache )?[a-fA-F0-9]+$/{print $NF}')
   clean_image
   echo "$IMAGE_ID" > .image-id.raw
 
